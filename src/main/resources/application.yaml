@@ -1,0 +1,109 @@
+# =========================================================
+# [영속화] Spring Boot 설정 — DB 연결 + JPA(Hibernate) 동작
+# =========================================================
+# Entity(Member/Post) → Repository.save() 가 실제로 MySQL에
+# INSERT/UPDATE/SELECT 되려면 아래 datasource + jpa 설정이 필요함
+#
+# 연결 흐름)
+#   Service.save() / findAll()
+#     → Repository (JpaRepository)
+#     → Hibernate가 SQL 생성
+#     → datasource.url 의 MySQL(kdt-spring) 로 전송
+#     → board_member / board_post 테이블 반영·조회
+spring:
+  # application:
+  #   name: kdt-board # 애플리케이션 이름
+
+  # --- 외부 설정 파일 로드 (비밀번호 등을 yaml 밖에 두기) ---
+  # spring.config.import : 추가 설정 파일을 불러옴
+  # file:./env.properties → 프로젝트 실행 디렉터리(보통 루트)의 env.properties
+  #
+  # [주의] Spring Boot 는 Node 의 .env 를 기본으로 읽지 않음
+  #   - .env          → Spring 미지원 (이름도 다름)
+  #   - env.properties → Spring 이 읽는 형식 (KEY=value)
+  # [.properties] 문법 = 확장자 생략 시 .properties/.yaml 등을 찾아봄
+  #   → 실제 파일명은 env.properties 여야 함 (./env 또는 ./.env 아님)
+  # optional: 접두사 = 파일 없어도 기동은 됨 (대신 ${BOARD_DB_*} 가 비면 나중에 실패)
+  config:
+    import: "file:./env.properties"
+
+  # --- DB 접속 (영속화 대상 저장소) ---
+  datasource:
+    # jdbc:mysql://호스트:포트/DB이름?옵션
+    # allowPublicKeyRetrieval=true → MySQL 8 인증 키 관련
+    # sslMode=DISABLED             → 로컬이라 SSL 끄기
+    # ${...} 값은 env.properties (spring.config.import) 에서 주입
+    url: ${BOARD_DB_URL}
+    username: ${BOARD_DB_USERNAME}
+    password: ${BOARD_DB_PASSWORD}
+
+  # --- JPA / Hibernate (Entity ↔ 테이블 매핑 엔진) ---
+  jpa:
+    hibernate:
+      # ddl-auto: Entity(@Table)를 보고 테이블을 어떻게 다룰지
+      # none        → 자동 생성/변경 안 함 (지금 설정, 안전)
+      #               board_member / board_post 는 DB에 미리 있어야 함
+      # create      → 시작 시 테이블 삭제 후 새로 생성 (데이터 날아감!)
+      # create-drop → 시작 시 생성, 종료 시 삭제
+      # update      → 없으면 추가 (기존 컬럼 삭제는 안 함)
+      # validate    → 엔티티와 테이블이 맞는지 검증만
+      ddl-auto: none  # Hibernate가 DB 테이블을 자동으로 다룰지 여부
+
+    # show-sql: Hibernate 가 SQL 을 직접 콘솔에 찍을지 (true/false)
+    # 06차시: 로거(logging.level.sql 등)와 비교한 뒤 본문은 false 유지
+    # - show-sql:true  → Hibernate 자체 출력
+    # - logging.level.sql: debug → 로깅 프레임워크로 SQL 표시 (지금 방식)
+    # "남기는 쪽"과 "표시 설정"을 나누는 연습과 같은 맥락
+    show-sql: false
+
+    # SQL 로그를 읽기 쉽게 만드는 Hibernate 부가 옵션
+    properties:
+      hibernate:
+        format_sql: true       # SQL을 줄바꿈·들여쓰기로 보기 좋게
+        highlight_sql: true    # 콘솔에서 SQL 키워드 색 강조
+        use_sql_comments: true # /* ... */ 형태로 어떤 작업인지 주석 표시
+
+    # open-in-view (OSIV = Open Session/EntityManager In View)
+    # true  (Boot 기본값): HTTP 요청이 끝날 때까지 영속 컨텍스트를 열어 둠
+    #                      → Controller에서 LAZY(getMember 등) 접근이 됨
+    # false (지금 설정)  : Service/Repository 트랜잭션이 끝나면 영속 컨텍스트 종료
+    #                      → Controller에서 LAZY 접근 시 LazyInitializationException
+    # PostLoadController(/posts/load-check) 로 true/false 차이를 확인하는 용도
+    open-in-view: true
+
+# --- 로그 레벨 (logging.level) = "표시하는 설정"
+# spring.jpa 아래가 아니라 루트 logging 이어야 인식됨
+# 로그를 "남기는 코드" 는 LogPracticeController (/logs/check) 의 log.debug/info
+# 여기 설정이 바뀌면 같은 코드라도 콘솔에 보이는 양이 달라짐
+#
+# [개념] 로그 레벨 = "얼마나 자세한 기록을 남길지" 필터
+# 상세한 쪽 → 적은 쪽 순서)
+#   TRACE → DEBUG → INFO → WARN → ERROR → OFF
+# - 설정한 레벨 "이상"만 출력됨
+#   예) INFO  → INFO/WARN/ERROR 만 (TRACE·DEBUG 안 나옴)
+#   예) DEBUG → DEBUG/INFO/WARN/ERROR (TRACE 는 안 나옴)
+# - 패키지/클래스별로 다르게 지정 가능 (아래처럼 로거 이름: 레벨)
+#
+# 레벨별 역할)
+#   TRACE : 가장 세밀 (파라미터·내부 흐름) — SQL ? 바인딩 값 등
+#   DEBUG : 개발용 상세 흐름 — 트랜잭션 Creating/Committing 등
+#   INFO  : 정상 운영 요약 — 기동 완료, 요청 처리 요약 (Boot 기본에 가까움)
+#   WARN  : 당장 죽진 않지만 주의 — deprecated, 재시도, 설정 이상
+#   ERROR : 실패·예외 — 처리 실패, 스택트레이스
+#   OFF   : 해당 로거 출력 전부 끔
+#
+# 이 프로젝트에서 쓰는 이유)
+#   JpaTransactionManager → DEBUG : Creating / Committing / Rolling back 확인
+#   hibernate.orm.jdbc.bind → TRACE : 바인딩 값은 TRACE 에만 있어서 DEBUG 로는 부족
+logging:
+  level:
+    sql: debug
+    com.kdt.board : info
+    com.zaxxer.hikari.HikariConfig: info #Hikari(정확히는 HikariCP)는 Spring Boot가 기본으로 쓰는 DB 커넥션 풀 라이브러리
+    # [/tx/ok · /tx/fail 등] 트랜잭션 경계 로그
+    # DEBUG 로 켜야 Creating new transaction / Committing / Closing 이 보임
+    org.springframework.orm.jpa.JpaTransactionManager: DEBUG
+    # SQL 의 ? 자리에 실제로 바인딩된 값 출력 (Hibernate 6)
+    # 예: binding parameter (1:VARCHAR) <- [kdt1729...]
+    # TRACE 필수 — DEBUG 로는 이 메시지가 안 나옴
+    org.hibernate.orm.jdbc.bind: TRACE
