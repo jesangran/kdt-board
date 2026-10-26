@@ -1,6 +1,49 @@
-### [08-JSON·DTO] 게시글 목록 — JSON 배열
+### [08] 게시글 목록 — 200 + JSON 배열
 GET http://localhost:8080/api/v1/posts
 Accept: application/json
+
+###
+### [09] 제목 조건 집계 — 쿼리 ?title=
+GET http://localhost:8080/api/v1/posts/count-by-title?title=closed
+Accept: application/json
+
+###
+### [09] 단건 조회 — 있으면 200 + PostResponse
+GET http://localhost:8080/api/v1/posts/1
+Accept: application/json
+
+###
+### [09] 단건 조회 — 없으면 404 + ApiError
+GET http://localhost:8080/api/v1/posts/999999
+Accept: application/json
+
+###
+### [09] 게시글 생성 — 201 + Location + PostResponse
+### ※ Content-Type 과 본문(JSON) 필수. 헤더와 { 사이 빈 줄 유지
+### ※ memberId 는 DB에 있는 회원 PK (없으면 404 member missing)
+POST http://localhost:8080/api/v1/posts
+Content-Type: application/json
+
+{
+  "title": "today",
+  "body": "menu",
+  "memberId": 1
+}
+
+###
+### [09] 게시글 수정 — PUT /api/v1/posts/{id} → 200 + PostResponse
+### ※ 헤더 다음 반드시 빈 줄, 그다음 JSON 본문
+PUT http://localhost:8080/api/v1/posts/8
+Content-Type: application/json
+
+{
+  "title": "notice",
+  "body": "meeting"
+}
+
+###
+### [09] 게시글 삭제 — DELETE → 204 No Content (본문 없음)
+DELETE http://localhost:8080/api/v1/posts/8
 
 ###
 ### (비교) 기존 평문 문자열 응답

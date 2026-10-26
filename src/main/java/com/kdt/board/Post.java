@@ -8,47 +8,35 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import java.time.Instant;
 
 /*
- * =========================================================
  * [영속화] Post = Entity (board_post)
- * =========================================================
- * 영속화 = 자바 객체를 DB에 저장해서, 앱을 꺼도 데이터가 남게 하는 것
  *
- * Entity 생명주기
- * 1) 비영속 : new Post() 직후 → id=null
- * 2) 영속   : repository.save() 후 → JPA가 관리, id 부여
- * 3) 준영속 : 영속 컨텍스트에서 분리
- * 4) 삭제   : 삭제 예약
+ * 영속성 = 자바 객체를 DB에 저장해 앱을 꺼도 데이터가 남게 하는 것
  *
- * [관련 소스]
- * 1. Post / Member     → 양방향 연관 매핑
- * 2. PostRepository    → DB 접근
- * 3. PostService       → save / findAll / findById
- * 4. PostController    → GET /posts, /posts/1
- * 5. BoardSeedRunner   → seed INSERT (createdAt 확인)
- * 6. PostAuditUpdateRunner → body UPDATE (updatedAt 확인)
+ * 생명주기 (초보)
+ *   1) 비영속 : new Post() — JPA가 모름, id=null, DB와 무관
+ *   2) 영속   : repository.save() 후 — JPA가 관리, INSERT/UPDATE, id 부여
+ *   3) 준영속 : 트랜잭션 끝 — 관리 종료. 이후 set해도 자동 UPDATE 없음
+ *   4) 삭제   : delete — DB에서 제거 예약
  *
- * Member와의 관계 (양방향의 N쪽 = 연관 주인)
- * - @ManyToOne + @JoinColumn(member_id) → FK를 가진 쪽
- * - Member.posts 의 mappedBy = "member" 와 짝
+ * 더티 체킹: "영속"일 때만. setTitle() 후 커밋 때 값이 바뀌었으면 UPDATE
+ *   → PostService.update() 가 save() 없이도 DB 반영되는 이유
+ *
+ * 양방향 N쪽(연관 주인): @ManyToOne + member_id FK
+ *   ↔ Member.posts 의 mappedBy = "member"
+ *
+ * [Auditing] JpaAuditingConfig(@EnableJpaAuditing) + Listener
+ *   INSERT: createdAt·updatedAt 자동 / UPDATE: updatedAt만
  */
-@Entity // JPA가 DB 테이블과 매핑하는 Entity
-@Table(name = "board_post") // 매핑할 실제 테이블 이름
-/*
- * @EntityListeners(AuditingEntityListener.class)
- * - 저장 직전 이벤트를 감지해 @CreatedDate / @LastModifiedDate 자동 세팅
- * - INSERT: createdAt + updatedAt
- * - UPDATE: updatedAt 만 갱신 (createdAt 은 updatable=false)
- * - 전제: JpaAuditingConfig 의 @EnableJpaAuditing
- */
+@Entity
+@Table(name = "board_post")
 @EntityListeners(AuditingEntityListener.class)
 public class Post {
 
-    // DB가 생성하는 게시글 ID (저장 전 null → 저장 후 AUTO_INCREMENT)
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // SQL 열의 NOT NULL·길이에 맞춘 매핑
+    /** DB NOT NULL·길이 — PostCreateRequest @Size 와 맞춤 */
     @Column(nullable = false, length = 20)
     private String title;
 
@@ -56,41 +44,29 @@ public class Post {
     private String body;
 
     /*
-     * 작성자(Member) — 양방향의 N쪽, 연관의 주인(FK 관리)
-     * - @ManyToOne : Post(N) → Member(1)
-     * - @JoinColumn(name = "member_id") : FK 컬럼
+     * [JPA 프록시 · LAZY] — AOP 프록시와 이름만 같고 역할이 다름!
      *
-     * [FetchType.LAZY] = JPA 프록시 (지연 로딩)
-     * - Post 조회 시 member 는 실제 Member 가 아니라 LAZY 껍데기
-     * - getMember()/getLoginId() 접근 시점에 board_member SELECT
-     * - 영속·트랜잭션 밖이면 LazyInitializationException
+     * Post 조회 직후 member 자리에 앉는 건 "껍데기(프록시)"
+     * getLoginId() 하는 순간 → board_member SELECT (지연 로딩)
      *
-     * [구분] JPA 프록시 vs AOP 프록시
-     * - JPA : 이 필드처럼 연관 엔티티를 나중에 로드 (Hibernate)
-     * - AOP : BoardTxService 빈을 감싸 트랜잭션 Advice (/tx/proxy)
-     * - alike: "대신 서는 객체" / 다름: 지연 로딩 vs Bean 가로채기
-     * - 같이 씀: /posts/read-in-tx (AOP가 영속 연 뒤 → 여기 LAZY SELECT)
+     * 전제: 아직 영속·트랜잭션이 열려 있어야 함
+     * 닫힌 뒤 접근 → LazyInitializationException
+     *
+     * 구분)
+     *   JPA 프록시 = 연관 데이터를 나중에 가져옴 (이 필드)
+     *   AOP 프록시 = Service 빈 호출을 가로채 트랜잭션/로그 (BoardTxController)
+     * 함께: /posts/read-in-tx — AOP가 영속 연 뒤 → 여기 LAZY SELECT
      */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "member_id", nullable = false)
     private Member member;
 
-    /*
-     * 생성 시각
-     * - Instant : UTC 절대 시각 (Auditing 기본도 Instant.now() → UTC)
-     * - @CreatedDate : INSERT 때 자동 세팅
-     * - updatable = false : 이후 UPDATE 로 바뀌지 않음
-     */
+    /** 생성 시각 — INSERT 때만, 이후 UPDATE로 안 바뀜 */
     @CreatedDate
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
 
-    /*
-     * 마지막 수정 시각
-     * - @LastModifiedDate : INSERT/UPDATE 때마다 Instant.now() 로 갱신
-     * - setBody() 직후가 아니라 save()/flush 시점에 바뀜
-     * - 확인: PostAuditUpdateRunner
-     */
+    /** 수정 시각 — INSERT/UPDATE 때 Auditing이 자동 갱신 */
     @LastModifiedDate
     @Column(name = "updated_at")
     private Instant updatedAt;
@@ -104,7 +80,6 @@ public class Post {
     }
 
     public Post() {
-        // JPA가 조회한 행으로 엔티티를 만들 때 사용하는 생성자
     }
 
     public Long getId() {
